@@ -1,3 +1,4 @@
+
 library(gt)
 library(dplyr)
 library(tidyr)
@@ -6,6 +7,7 @@ library(car)
 library(MASS)
 library(lmtest)
 library(ggplot2)
+library(caret)
 
 file_path <- 'project_data.csv'
 df <- read.csv(file_path, header=TRUE)
@@ -17,6 +19,7 @@ df <- df %>%
      baskets = litter_basket_count, park_acres = total_park_acres
 )
 
+
 # ----- Summary Statistics of Continuous Variables ----- #
 df %>%
   summarise(across(c(inspections, pop, baskets, park_acres),
@@ -27,6 +30,7 @@ df %>%
   gt() %>%
   tab_header(title = "Fig. 1: Descriptive Statistics") %>%
   fmt_number(columns = c(Median, Mean, SD, Min, Max), decimals = 2)
+
 
 # ----- Exploratory Data Analysis ----- #
 hist(df$inspections, main = "Fig. 2: Rat Inspections by Zip", 
@@ -58,9 +62,11 @@ stripchart(inspections ~ has_dropoff_label, vertical=TRUE, method='jitter', pch=
      data = df, main = "Fig. 8: Inspections by Dropoff Presence", 
      xlab = "Dropoff Status", ylab = "Number of Inspections")
 
+
 # ----- Initial Regression Model ----- #
 model <- lm(inspections ~ pop + garage + dropoff + baskets + park_acres, data=df)
 summary(model)
+
 
 # ----- Correlation Matrix ----- #
 X <- model.matrix(model)[, -1]
@@ -68,6 +74,7 @@ cor_matrix <- cor(X)
 corrplot(cor_matrix, method = "color", type = "upper", 
    addCoef.col = "black", tl.col = "black", tl.cex = 0.8, tl.srt = 45,
    title = "Fig. 9: Correlation Matrix of Predictor Variables", mar = c(0, 0, 2, 0))
+
 
 # ----- Residual Analysis of Initial Model ----- #
 stud_res <- rstudent(model)
@@ -101,16 +108,20 @@ mtext("Fig. 10: Residual Plots", outer = TRUE)
 
 par(mfrow = c(1, 1))
 
+
 # ----- Test for Homogeneity of Variance ----- #
 bptest(model, studentize = TRUE)
 
+
 # ----- Test for Normality ----- #
 shapiro.test(rstudent(model))
+
 
 # ----- Box Cox Transformation ----- #
 result <- boxCox(model, main = "Fig. 11: Box-Cox Transformation")
 lambda <- result$x[which.max(result$y)]
 lambda
+
 
 # ----- Taking the Log of Inspections ----- #
 any(df$inspections <= 0)
@@ -118,6 +129,7 @@ df$log_inspections <- log(df$inspections)
 
 log_model <- lm(log_inspections ~ pop + garage + dropoff + baskets + park_acres, data=df)
 summary(log_model)
+
 
 # ----- Examining Interaction Effects ----- # 
 ggplot(df, aes(x = pop, y = inspections, color = factor(dropoff))) +
@@ -150,6 +162,7 @@ ggplot(df, aes(x = pop, y = inspections, color = binned_baskets)) +
   theme(plot.title = element_text(hjust = 0.5)) +
   scale_color_manual(values = c("red", "blue", "black"))
 
+
 # ----- Centered Model with Interactions ----- # 
 df$pop_c <- scale(df$pop, scale = FALSE)
 df$baskets_c <- scale(df$baskets, scale = FALSE)
@@ -160,8 +173,10 @@ summary(centered_log_int_model)
 vif_values <- vif(centered_log_int_model)
 mean(vif_values)
 
+
 # ----- ANOVA ----- #
 anova(log_model, centered_log_int_model)
+
 
 # ----- Residual Analysis for Final Model ----- #
 final_stud_res <- rstudent(centered_log_int_model)
@@ -196,11 +211,14 @@ mtext("Fig. 15: Residual Plots", outer = TRUE)
 
 par(mfrow = c(1, 1))
 
+
 # ----- Test for Homogeneity of Variance ----- #
 bptest(centered_log_int_model, studentize = TRUE)
 
+
 # ----- Test for Normality ----- #
 shapiro.test(rstudent(centered_log_int_model))
+
 
 # ----- Identifying Influential Cases ----- #
 cooks_d <- cooks.distance(centered_log_int_model)
@@ -216,3 +234,22 @@ abline(h = 4/n, col = "red", lty = 2)
 print(paste("Number of influential observations:", length(influential)))
 print(paste("Threshold:", round(threshold, 4)))
 print(paste("Max Cook's Distance:", round(max(cooks_d), 4)))
+
+
+# ----- K-Fold Cross Validation ----- #
+train_control <- trainControl(method = "cv", number = 10)
+
+model_cv <- train(log_inspections ~ pop_c*baskets_c + pop_c*garage + pop_c*dropoff, 
+   data = df, method = "lm", trControl = train_control)
+
+print(model_cv)
+
+
+# ----- Comparison to the Standard Model ----- #
+cat("\n--- Standard Model ---\n")
+cat("R-squared:", summary(centered_log_int_model)$r.squared, "\n")
+cat("RMSE:", sqrt(mean(centered_log_int_model$residuals^2)), "\n")
+
+cat("\n--- Cross-Validation ---\n")
+cat("R-squared:", model_cv$results$Rsquared, "\n")
+cat("RMSE:", model_cv$results$RMSE, "\n")
